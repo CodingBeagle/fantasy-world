@@ -85,8 +85,6 @@ fn main() {
                 // RENDER HERE
             }
         }
-
-        terminate
     }
 }
 
