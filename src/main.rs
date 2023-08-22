@@ -6,6 +6,9 @@ use windows::{
     Foundation::{HWND, WPARAM, LPARAM, LRESULT}},
     core::*};
 
+static mut EXIT : bool = false;
+static mut MAIN_WINDOW_HANDLE : Option<HWND> = None;
+
 fn main() {
     unsafe {
         // Retrieve module to the executable for the current process.
@@ -48,17 +51,27 @@ fn main() {
             handle,
             None);
 
-        ShowWindow(main_window_handle, SW_SHOWNORMAL);
+        if main_window_handle.0 == 0 {
+            panic!("Failed to create main window");
+        }
+
+        MAIN_WINDOW_HANDLE = Some(main_window_handle);
+
+        println!("Initialized window!");
+
+        ShowWindow(MAIN_WINDOW_HANDLE.unwrap(), SW_SHOWNORMAL);
 
         let mut msg = MSG::default();
 
-        let mut exit = false;
-        while !exit {
-
+        while !EXIT {
             // PeekMessage retrieves messages associated with the window identified by the handle.
             // It returns a nonzero value is a message is available.
             // PM_REMOVE option means that messages are removed from the queue after processing by PeekMessage.
-            if PeekMessageW(&mut msg, main_window_handle, 0, 0, PM_REMOVE) == windows::Win32::Foundation::TRUE {
+            if PeekMessageW(&mut msg, MAIN_WINDOW_HANDLE.unwrap(), 0, 0, PM_REMOVE) == windows::Win32::Foundation::TRUE {
+                if msg.message == WM_QUIT {
+                    EXIT = true;
+                }
+
                 // TranslateMessage is related to keyboard input.
                 // It translates virtual key messages into character messages. These are then posted to the calling thread's message queue, to be read by the next PeekMessage function.
                 // More precisely, the function produces WM_CHAR messages only for keys that are mapped to ASCII characters by the keyboard driver.
@@ -68,14 +81,12 @@ fn main() {
                 // DispatchMessage dispatches a message to the window procedure.
                 // That is, DispatchMessage calls the window procedure you provided in the window class.
                 DispatchMessageW(&msg);
-
-                if msg.message == WM_QUIT {
-                    exit = true;
-                }
             } else {
                 // RENDER HERE
             }
         }
+
+        terminate
     }
 }
 
@@ -85,6 +96,13 @@ fn main() {
 extern "system" fn wndproc(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     unsafe {
         match message {
+            // WM_CLOSE is received if the user clicks the Close button in the window corner.
+            // It gives you an opportunity to react before actually terminating your application.
+            WM_CLOSE => {
+                EXIT = true;
+                DestroyWindow(MAIN_WINDOW_HANDLE.unwrap());
+                LRESULT(0)
+            },
             // If you don't handle a particular message in your procedure, you can pass the message to DefWindowProc.
             // This function performs default actions for messages.
             _ => DefWindowProcW(window, message, wparam, lparam),
