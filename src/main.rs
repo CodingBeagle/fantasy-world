@@ -1,4 +1,7 @@
 use std::mem::{size_of, self};
+use std::ffi::*;
+
+use ash::Entry;
 
 use windows::{
     Win32::{UI::WindowsAndMessaging::*,
@@ -57,12 +60,49 @@ fn main() {
 
         MAIN_WINDOW_HANDLE = Some(main_window_handle);
 
-        println!("Initialized window!");
-
         ShowWindow(MAIN_WINDOW_HANDLE.unwrap(), SW_SHOWNORMAL);
 
-        let mut msg = MSG::default();
+        println!("*** Initializing Vulkan ***");
 
+        // Load the Vulkan Library dynamically
+        let vulkan_entry = Entry::load().unwrap();
+
+        // First thing to do when initializing Vulkan is to create an "instance".
+        // The instance is the connection between your application and the Vulkan library.
+        
+        // To create an instance, we have to fill out a struct with information about our application.
+        // The data is optional, but it may provide some useful information to the driver in order to optimize
+        // our application.
+
+        let application_name = CString::new("Fantasy World").unwrap();
+        let engine_name = CString::new("No Engine").unwrap();
+        let application_info = ash::vk::ApplicationInfo::builder()
+            .application_name(application_name.as_c_str())
+            .application_version(ash::vk::make_api_version(1, 0, 0, 0))
+            .engine_name(engine_name.as_c_str())
+            .engine_version(ash::vk::make_api_version(1, 0, 0, 0))
+            .api_version(ash::vk::API_VERSION_1_0)
+            .build();
+
+        // We also have to define an InstanceCreateInfo struct, which is required.
+        // This struct tells the Vulkan driver which global extensions and validation layers
+        // we want to use.
+
+        let required_extensions : Vec<*const i8> = vec![
+            ash::extensions::khr::Surface::name().as_ptr(),
+            ash::extensions::khr::Win32Surface::name().as_ptr(),
+            ash::extensions::ext::DebugUtils::name().as_ptr()
+        ];
+
+        let create_info = ash::vk::InstanceCreateInfo::builder()
+            .application_info(&application_info)
+            .enabled_extension_names(required_extensions.as_ref())
+            .build();
+
+        // Create the instance!
+        let vulkan_instance = vulkan_entry.create_instance(&create_info, None).unwrap();
+
+        let mut msg = MSG::default();
         while !EXIT {
             // PeekMessage retrieves messages associated with the window identified by the handle.
             // It returns a nonzero value is a message is available.
