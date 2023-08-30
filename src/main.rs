@@ -16,6 +16,8 @@ static mut MAIN_WINDOW_HANDLE : Option<HWND> = None;
 
 static mut VK_INSTANCE : Option<Instance> = None;
 
+static mut VALIDATION_LAYERS_ENABLED : bool = true;
+
 fn main() {
     unsafe {
         // Retrieve module to the executable for the current process.
@@ -71,6 +73,15 @@ fn main() {
         // Load the Vulkan Library dynamically
         let vk_entry = Entry::load().unwrap();
 
+        // Check support for required layers
+        let required_layers = vec!(
+            "VK_LAYER_KHRONOS_validation",
+        );
+
+        if !check_layer_support(&vk_entry, &required_layers) {
+            panic!("Failed to find support for all specified layers!");
+        }
+
         // First thing to do when initializing Vulkan is to create an "instance".
         // The instance is the connection between your application and the Vulkan library.
         
@@ -96,23 +107,37 @@ fn main() {
             ash::extensions::ext::DebugUtils::name().as_ptr()
         ];
 
-        let create_info = ash::vk::InstanceCreateInfo::builder()
-            .application_info(&application_info)
-            .enabled_extension_names(required_extensions.as_ref())
-            .build();
+        let mut create_info = ash::vk::InstanceCreateInfo::default();
+        create_info.p_application_info = &application_info;
+        create_info.pp_enabled_extension_names = required_extensions.as_ptr();
+        create_info.enabled_extension_count = required_extensions.len() as u32;
+
+        // Right now the best way I've found to pass a reference to an array of C-style strings (*const i8 *const i8) is to take the array of Rust strings
+        // and convert them to an Array of CStrings, because CString has a method to convert a String to a c-style string with nul termination.
+        // Then I take that array of CString and get the pointer to null-terminated bytes of it.
+        // The reason why I have to make a &str -> CString -> pointer to CString content is that I need the CString to stay alive to point to its content.
+        // If I try to make a transform statement from &str -> pointer of nul-terminated bytes through a CString defined in the Map closure, it obviously fails because the CStrings
+        // go out of scope at the end of their map scope.
+        let validation_layers_c_string : Vec<CString> = required_layers
+            .iter()
+            .map(|validation_layer| {
+                CString::new(validation_layer.to_string()).unwrap()
+            })
+            .collect();
+
+        let validation_layers_api_string : Vec<*const i8> = validation_layers_c_string.iter().map(|x| {
+            x.as_bytes_with_nul().as_ptr() as *const i8
+        })
+        .collect();
+
+        if VALIDATION_LAYERS_ENABLED {
+            create_info.pp_enabled_layer_names = validation_layers_api_string.as_ptr();
+            create_info.enabled_layer_count = validation_layers_api_string.len() as u32;
+        }
 
         // Create the instance!
         VK_INSTANCE = Some(vk_entry.create_instance(&create_info, None).unwrap());
         let vk_instance_local = VK_INSTANCE.as_ref().unwrap();
-
-        // Check support for required layers
-        let required_layers = vec!(
-            "VK_LAYER_KHRONOS_validation",
-        );
-
-        if !check_layer_support(&vk_entry, required_layers) {
-            panic!("Failed to find support for all specified layers!");
-        }
 
         let mut msg = MSG::default();
         while !EXIT {
@@ -143,7 +168,7 @@ fn main() {
     }
 }
 
-fn check_layer_support(vk_entry: &Entry, layers_to_check : Vec<&str>) -> bool {
+fn check_layer_support(vk_entry: &Entry, layers_to_check : &Vec<&str>) -> bool {
     unsafe {
         let instance_layer_properties = vk_entry.enumerate_instance_layer_properties().unwrap();
 
@@ -155,7 +180,9 @@ fn check_layer_support(vk_entry: &Entry, layers_to_check : Vec<&str>) -> bool {
                 let available_layer_name = CStr::from_bytes_until_nul(available_layer_name_slice).unwrap()
                     .to_str().unwrap();
 
-                if available_layer_name == layer_name {
+                let pislort = *layer_name;
+
+                if available_layer_name == pislort {
                     layer_found = true;
                     break;
                 }
