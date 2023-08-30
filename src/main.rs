@@ -117,7 +117,9 @@ fn main() {
         // Then I take that array of CString and get the pointer to null-terminated bytes of it.
         // The reason why I have to make a &str -> CString -> pointer to CString content is that I need the CString to stay alive to point to its content.
         // If I try to make a transform statement from &str -> pointer of nul-terminated bytes through a CString defined in the Map closure, it obviously fails because the CStrings
-        // go out of scope at the end of their map scope.
+        // go out of scope at the end of their map.
+        // I could obviously straight up create a CStr array from string literals that are nul-terminated, but one of my goals is to hide as many C-specific types and concerns
+        // from the most abstracted layers of my code, going forward.
         let validation_layers_c_string : Vec<CString> = required_layers
             .iter()
             .map(|validation_layer| {
