@@ -13,3 +13,11 @@ So, the payoff of less implicit behaviour is more explicit work by you. This is 
 ### Struct parameter passing
 
 A lot of information in Vulkan is passed to functions in structs that you define before calling the function.
+
+### Minimal Overhead
+
+Vulkan operates on a design goal of minimal driver overhead.
+
+Example: there is actually very limited error checking in the API by default. Mistakes such as setting enumerations to incorrect values or passing null pointers to required parameters is not explicitly handled and will simply result in a crash, or undefined behaviour.
+
+In order to add things such as debug support, or error checking, you use a type of behaviour extension known as **layers**, which is code that is inserted into the call chain of a function which the layer is interested in.

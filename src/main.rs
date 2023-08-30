@@ -1,8 +1,10 @@
 use std::mem::{size_of, self};
-use std::ffi::*;
+use std::{ffi::*, slice};
+use std::str;
 
-use ash::Entry;
+use ash::{Entry, Instance};
 
+use windows::Win32::Foundation::ERROR_VOLMGR_DISK_NOT_ENOUGH_SPACE;
 use windows::{
     Win32::{UI::WindowsAndMessaging::*,
     System::LibraryLoader::{GetModuleHandleA},
@@ -11,6 +13,8 @@ use windows::{
 
 static mut EXIT : bool = false;
 static mut MAIN_WINDOW_HANDLE : Option<HWND> = None;
+
+static mut VK_INSTANCE : Option<Instance> = None;
 
 fn main() {
     unsafe {
@@ -65,7 +69,7 @@ fn main() {
         println!("*** Initializing Vulkan ***");
 
         // Load the Vulkan Library dynamically
-        let vulkan_entry = Entry::load().unwrap();
+        let vk_entry = Entry::load().unwrap();
 
         // First thing to do when initializing Vulkan is to create an "instance".
         // The instance is the connection between your application and the Vulkan library.
@@ -73,7 +77,6 @@ fn main() {
         // To create an instance, we have to fill out a struct with information about our application.
         // The data is optional, but it may provide some useful information to the driver in order to optimize
         // our application.
-
         let application_name = CString::new("Fantasy World").unwrap();
         let engine_name = CString::new("No Engine").unwrap();
         let application_info = ash::vk::ApplicationInfo::builder()
@@ -87,7 +90,6 @@ fn main() {
         // We also have to define an InstanceCreateInfo struct, which is required.
         // This struct tells the Vulkan driver which global extensions and validation layers
         // we want to use.
-
         let required_extensions : Vec<*const i8> = vec![
             ash::extensions::khr::Surface::name().as_ptr(),
             ash::extensions::khr::Win32Surface::name().as_ptr(),
@@ -100,7 +102,17 @@ fn main() {
             .build();
 
         // Create the instance!
-        let vulkan_instance = vulkan_entry.create_instance(&create_info, None).unwrap();
+        VK_INSTANCE = Some(vk_entry.create_instance(&create_info, None).unwrap());
+        let vk_instance_local = VK_INSTANCE.as_ref().unwrap();
+
+        // Check support for required layers
+        let required_layers = vec!(
+            "VK_LAYER_KHRONOS_validation",
+        );
+
+        if !check_layer_support(&vk_entry, required_layers) {
+            panic!("Failed to find support for all specified layers!");
+        }
 
         let mut msg = MSG::default();
         while !EXIT {
@@ -125,6 +137,36 @@ fn main() {
                 // RENDER HERE
             }
         }
+
+        // Application cleanup
+        vk_instance_local.destroy_instance(None);
+    }
+}
+
+fn check_layer_support(vk_entry: &Entry, layers_to_check : Vec<&str>) -> bool {
+    unsafe {
+        let instance_layer_properties = vk_entry.enumerate_instance_layer_properties().unwrap();
+
+        for layer_name in layers_to_check {
+            let mut layer_found = false;
+
+            for available_layer in &instance_layer_properties {
+                let available_layer_name_slice = std::slice::from_raw_parts::<u8>(available_layer.layer_name.as_ptr() as *const u8, available_layer.layer_name.len());
+                let available_layer_name = CStr::from_bytes_until_nul(available_layer_name_slice).unwrap()
+                    .to_str().unwrap();
+
+                if available_layer_name == layer_name {
+                    layer_found = true;
+                    break;
+                }
+            }
+
+            if !layer_found {
+                return false;
+            }
+        }
+
+        true
     }
 }
 
