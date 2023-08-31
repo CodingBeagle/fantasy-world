@@ -2,6 +2,7 @@ use std::mem::{size_of, self};
 use std::{ffi::*, slice};
 use std::str;
 
+use ash::vk::{DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCallbackDataEXT};
 use ash::{Entry, Instance};
 
 use windows::Win32::Foundation::ERROR_VOLMGR_DISK_NOT_ENOUGH_SPACE;
@@ -101,15 +102,21 @@ fn main() {
         // We also have to define an InstanceCreateInfo struct, which is required.
         // This struct tells the Vulkan driver which global extensions and validation layers
         // we want to use.
-        let required_extensions : Vec<*const i8> = vec![
-            ash::extensions::khr::Surface::name().as_ptr(),
-            ash::extensions::khr::Win32Surface::name().as_ptr(),
-            ash::extensions::ext::DebugUtils::name().as_ptr()
+        let required_extensions : Vec<CString> = vec![
+            CString::new("VK_KHR_surface").unwrap(),
+            CString::new("VK_KHR_win32_surface").unwrap(),
+            CString::new("VK_EXT_debug_utils").unwrap(),
         ];
+
+        let required_extensions_api_call : Vec<*const i8> =
+            required_extensions
+            .iter()
+            .map(|extension| extension.as_c_str().as_ptr())
+            .collect();
 
         let mut create_info = ash::vk::InstanceCreateInfo::default();
         create_info.p_application_info = &application_info;
-        create_info.pp_enabled_extension_names = required_extensions.as_ptr();
+        create_info.pp_enabled_extension_names = required_extensions_api_call.as_ptr();
         create_info.enabled_extension_count = required_extensions.len() as u32;
 
         // Right now the best way I've found to pass a reference to an array of C-style strings (*const i8 *const i8) is to take the array of Rust strings
@@ -141,6 +148,17 @@ fn main() {
         VK_INSTANCE = Some(vk_entry.create_instance(&create_info, None).unwrap());
         let vk_instance_local = VK_INSTANCE.as_ref().unwrap();
 
+        // Set up Vulkan Debug Messenger
+        let vk_debug_messenger = ash::vk::DebugUtilsMessengerCreateInfoEXT::builder()
+            .message_severity(ash::vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE | ash::vk::DebugUtilsMessageSeverityFlagsEXT::WARNING | ash::vk::DebugUtilsMessageSeverityFlagsEXT::ERROR)
+            .message_type(ash::vk::DebugUtilsMessageTypeFlagsEXT::GENERAL | ash::vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION | ash::vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE)
+            .pfn_user_callback(Some(debug_messenger_callback))
+            .build();
+
+        let debug_utils_extension = ash::extensions::ext::DebugUtils::new(&vk_entry, &vk_instance_local);
+
+        let vk_debug_messenger = debug_utils_extension.create_debug_utils_messenger(&vk_debug_messenger, None).unwrap();
+
         let mut msg = MSG::default();
         while !EXIT {
             // PeekMessage retrieves messages associated with the window identified by the handle.
@@ -165,9 +183,28 @@ fn main() {
             }
         }
 
+        // Cleanup debug messenger
+        debug_utils_extension.destroy_debug_utils_messenger(vk_debug_messenger, None);
+
         // Application cleanup
         vk_instance_local.destroy_instance(None);
     }
+}
+
+/*
+ The Vulkan debug messenger callback is called 
+*/
+unsafe extern "system" fn debug_messenger_callback(
+    message_severity : DebugUtilsMessageSeverityFlagsEXT,
+    message_type : DebugUtilsMessageTypeFlagsEXT,
+    p_callback_data : *const DebugUtilsMessengerCallbackDataEXT,
+    p_user_data : *mut c_void) -> ash::vk::Bool32 {
+
+    println!("Debug Messenger Called! :D");
+
+    // The debug messenger callback should always return false.
+    // True is reserved for layer development only.
+    ash::vk::FALSE
 }
 
 fn check_layer_support(vk_entry: &Entry, layers_to_check : &Vec<&str>) -> bool {
