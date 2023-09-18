@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::mem::{size_of, self};
 use std::{ffi::*, slice};
 use std::str;
@@ -114,6 +115,7 @@ fn main() {
             .map(|extension| extension.as_c_str().as_ptr())
             .collect();
 
+        // TODO: Consider providing DebugUtilsMessengerCreateInfo to the next pointer, in order to enable debug messaging during instance creation
         let mut create_info = ash::vk::InstanceCreateInfo::default();
         create_info.p_application_info = &application_info;
         create_info.pp_enabled_extension_names = required_extensions_api_call.as_ptr();
@@ -200,7 +202,18 @@ unsafe extern "system" fn debug_messenger_callback(
     p_callback_data : *const DebugUtilsMessengerCallbackDataEXT,
     p_user_data : *mut c_void) -> ash::vk::Bool32 {
 
-    println!("Debug Messenger Called! :D");
+    let raw_message = (*p_callback_data).p_message;
+    let message_as_c_str = CStr::from_ptr(raw_message);
+
+    let message_severity = match message_severity {
+        DebugUtilsMessageSeverityFlagsEXT::ERROR => "Error",
+        DebugUtilsMessageSeverityFlagsEXT::INFO => "Info",
+        DebugUtilsMessageSeverityFlagsEXT::VERBOSE => "Verbose",
+        DebugUtilsMessageSeverityFlagsEXT::WARNING => "Warning",
+        _ => "Unknown Severity",
+    };
+
+    println!("{}: {}", message_severity, message_as_c_str.to_str().unwrap());
 
     // The debug messenger callback should always return false.
     // True is reserved for layer development only.
