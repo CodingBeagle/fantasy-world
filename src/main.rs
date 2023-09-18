@@ -3,7 +3,7 @@ use std::mem::{size_of, self};
 use std::{ffi::*, slice};
 use std::str;
 
-use ash::vk::{DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCallbackDataEXT};
+use ash::vk::{DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCallbackDataEXT, QueueFamilyProperties};
 use ash::{Entry, Instance};
 
 use windows::Win32::Foundation::ERROR_VOLMGR_DISK_NOT_ENOUGH_SPACE;
@@ -161,6 +161,9 @@ fn main() {
 
         let vk_debug_messenger = debug_utils_extension.create_debug_utils_messenger(&vk_debug_messenger, None).unwrap();
 
+        // Pick GPU
+        let picked_gpu = pick_physical_device(&vk_instance_local);
+
         let mut msg = MSG::default();
         while !EXIT {
             // PeekMessage retrieves messages associated with the window identified by the handle.
@@ -193,31 +196,65 @@ fn main() {
     }
 }
 
-/*
- The Vulkan debug messenger callback is called 
-*/
-unsafe extern "system" fn debug_messenger_callback(
-    message_severity : DebugUtilsMessageSeverityFlagsEXT,
-    message_type : DebugUtilsMessageTypeFlagsEXT,
-    p_callback_data : *const DebugUtilsMessengerCallbackDataEXT,
-    p_user_data : *mut c_void) -> ash::vk::Bool32 {
+unsafe fn pick_physical_device(vk_instance : &ash::Instance) -> ash::vk::PhysicalDevice {
+    let physical_devices = vk_instance.enumerate_physical_devices().unwrap();
 
-    let raw_message = (*p_callback_data).p_message;
-    let message_as_c_str = CStr::from_ptr(raw_message);
+    if physical_devices.is_empty() {
+        panic!("Failed to find any physical GPU!");
+    }
 
-    let message_severity = match message_severity {
-        DebugUtilsMessageSeverityFlagsEXT::ERROR => "Error",
-        DebugUtilsMessageSeverityFlagsEXT::INFO => "Info",
-        DebugUtilsMessageSeverityFlagsEXT::VERBOSE => "Verbose",
-        DebugUtilsMessageSeverityFlagsEXT::WARNING => "Warning",
-        _ => "Unknown Severity",
-    };
+    // Pick the first suitable device
+    for physical_device in physical_devices {
+        if is_device_suitable(physical_device, vk_instance) {
+            return physical_device;
+        }
+    }
 
-    println!("{}: {}", message_severity, message_as_c_str.to_str().unwrap());
+    panic!("Unable to find any suitable GPU!");
+}
 
-    // The debug messenger callback should always return false.
-    // True is reserved for layer development only.
-    ash::vk::FALSE
+// For now, I'm not doing anything fancy in determining what exactly I need. As long as it's a GPU!
+unsafe fn is_device_suitable(physical_device : ash::vk::PhysicalDevice, vk_instance : &ash::Instance) -> bool {
+    // Basic device properties
+    let physical_device_properties = vk_instance.get_physical_device_properties(physical_device);
+    println!("Checking device {}...", CStr::from_ptr(physical_device_properties.device_name.as_ptr()).to_str().unwrap());
+
+    // Support for optional features
+    let physical_device_features = vk_instance.get_physical_device_features(physical_device);
+
+    find_queue_families(physical_device, vk_instance).graphics_family.is_some()
+}
+
+#[derive(Default)]
+struct QueueFamilyIndices {
+    graphics_family: Option<u32>
+}
+
+impl QueueFamilyIndices {
+    pub fn is_complete(&self) -> bool {
+        self.graphics_family.is_some()
+    }
+}
+
+unsafe fn find_queue_families(physical_device : ash::vk::PhysicalDevice, vk_instance : &ash::Instance) -> QueueFamilyIndices {
+    let mut queue_family_indices = QueueFamilyIndices::default();
+
+    let queue_families = vk_instance.get_physical_device_queue_family_properties(physical_device);
+
+    let mut index_counter = 0;
+    for queue_family in queue_families {
+        if queue_family.queue_flags.contains(ash::vk::QueueFlags::GRAPHICS) {
+            queue_family_indices.graphics_family = Some(index_counter);
+        }
+
+        if queue_family_indices.is_complete() {
+            break;
+        }
+
+        index_counter += 1;
+    }
+
+    queue_family_indices
 }
 
 fn check_layer_support(vk_entry: &Entry, layers_to_check : &Vec<&str>) -> bool {
@@ -247,6 +284,33 @@ fn check_layer_support(vk_entry: &Entry, layers_to_check : &Vec<&str>) -> bool {
 
         true
     }
+}
+
+/*
+ The Vulkan debug messenger callback is called 
+*/
+unsafe extern "system" fn debug_messenger_callback(
+    message_severity : DebugUtilsMessageSeverityFlagsEXT,
+    message_type : DebugUtilsMessageTypeFlagsEXT,
+    p_callback_data : *const DebugUtilsMessengerCallbackDataEXT,
+    p_user_data : *mut c_void) -> ash::vk::Bool32 {
+
+    let raw_message = (*p_callback_data).p_message;
+    let message_as_c_str = CStr::from_ptr(raw_message);
+
+    let message_severity = match message_severity {
+        DebugUtilsMessageSeverityFlagsEXT::ERROR => "Error",
+        DebugUtilsMessageSeverityFlagsEXT::INFO => "Info",
+        DebugUtilsMessageSeverityFlagsEXT::VERBOSE => "Verbose",
+        DebugUtilsMessageSeverityFlagsEXT::WARNING => "Warning",
+        _ => "Unknown Severity",
+    };
+
+    println!("{}: {}", message_severity, message_as_c_str.to_str().unwrap());
+
+    // The debug messenger callback should always return false.
+    // True is reserved for layer development only.
+    ash::vk::FALSE
 }
 
 // window = handle to the window.
