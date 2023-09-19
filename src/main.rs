@@ -20,6 +20,8 @@ static mut VK_INSTANCE : Option<Instance> = None;
 
 static mut VALIDATION_LAYERS_ENABLED : bool = true;
 
+static mut REQUIRED_VALIDATION_LAYERS : Option<Vec<&str>> = None;
+
 fn main() {
     unsafe {
         // Retrieve module to the executable for the current process.
@@ -76,11 +78,11 @@ fn main() {
         let vk_entry = Entry::load().unwrap();
 
         // Check support for required layers
-        let required_layers = vec!(
+        REQUIRED_VALIDATION_LAYERS = Some(vec!(
             "VK_LAYER_KHRONOS_validation",
-        );
+        ));
 
-        if !check_layer_support(&vk_entry, &required_layers) {
+        if !check_layer_support(&vk_entry, &REQUIRED_VALIDATION_LAYERS.as_ref().unwrap()) {
             panic!("Failed to find support for all specified layers!");
         }
 
@@ -129,17 +131,16 @@ fn main() {
         // go out of scope at the end of their map.
         // I could obviously straight up create a CStr array from string literals that are nul-terminated, but one of my goals is to hide as many C-specific types and concerns
         // from the most abstracted layers of my code, going forward.
-        let validation_layers_c_string : Vec<CString> = required_layers
+        let validation_layers_c_string : Vec<CString> = REQUIRED_VALIDATION_LAYERS
+            .as_ref()
+            .unwrap()
             .iter()
             .map(|validation_layer| {
                 CString::new(validation_layer.to_string()).unwrap()
             })
             .collect();
 
-        let validation_layers_api_string : Vec<*const i8> = validation_layers_c_string.iter().map(|x| {
-            x.as_bytes_with_nul().as_ptr() as *const i8
-        })
-        .collect();
+        let validation_layers_api_string : Vec<*const i8> = create_array_of_string_pointers(&validation_layers_c_string);
 
         if VALIDATION_LAYERS_ENABLED {
             create_info.pp_enabled_layer_names = validation_layers_api_string.as_ptr();
@@ -163,6 +164,9 @@ fn main() {
 
         // Pick GPU
         let picked_gpu = pick_physical_device(&vk_instance_local);
+
+        // Create logical device
+        let logical_device = create_logical_device(vk_instance_local, picked_gpu);
 
         let mut msg = MSG::default();
         while !EXIT {
@@ -191,9 +195,47 @@ fn main() {
         // Cleanup debug messenger
         debug_utils_extension.destroy_debug_utils_messenger(vk_debug_messenger, None);
 
+        // Cleanup logical device
+        logical_device.destroy_device(None);
+
         // Application cleanup
         vk_instance_local.destroy_instance(None);
     }
+}
+
+fn create_array_of_string_pointers(c_string_collection : &Vec<CString>) -> Vec<*const i8> {
+    c_string_collection.iter().map(|x| x.as_bytes_with_nul().as_ptr() as *const i8).collect()
+}
+
+unsafe fn create_logical_device(vk_instance : &ash::Instance, physical_device : ash::vk::PhysicalDevice) -> ash::Device {
+    let queue_family_indices = find_queue_families(physical_device, vk_instance);
+
+    // Vulkan lets you assign priorities to queues to influence the scheduling of command buffer execution using floating point numbers between 0.0 and 1.0.
+    let queue_priorities : Vec<f32> = vec![1.0];
+
+    let mut queue_create_info = ash::vk::DeviceQueueCreateInfo::default();
+    queue_create_info.queue_family_index = queue_family_indices.graphics_family.unwrap();
+    queue_create_info.queue_count = 1;
+    queue_create_info.p_queue_priorities = queue_priorities.as_ptr();
+
+    // We also need to specify device features we'd like to use.
+    let device_features = ash::vk::PhysicalDeviceFeatures::default();
+
+    // Now we can create the logical device
+    let mut logical_device_create_info = ash::vk::DeviceCreateInfo::default();
+    logical_device_create_info.p_queue_create_infos = &queue_create_info;
+    logical_device_create_info.queue_create_info_count = 1;
+    logical_device_create_info.p_enabled_features = &device_features;
+
+    // Previous implementations of Vulkan made a distinction between instance and device specific validation layers.
+    // This is no longer the case. In up-to-date implementations enabled_layer_count and p_enabled_layer_names will be ignored.
+    // However it can be good to set for backwards compatability.
+    if VALIDATION_LAYERS_ENABLED {
+        logical_device_create_info.pp_enabled_layer_names = create_array_of_string_pointers(&vec![CString::new("VK_LAYER_KHRONOS_validation").unwrap()]).as_ptr();
+        logical_device_create_info.enabled_layer_count = REQUIRED_VALIDATION_LAYERS.as_ref().unwrap().len() as u32;
+    }
+
+    vk_instance.create_device(physical_device, &logical_device_create_info, None).unwrap()
 }
 
 unsafe fn pick_physical_device(vk_instance : &ash::Instance) -> ash::vk::PhysicalDevice {
@@ -266,12 +308,11 @@ fn check_layer_support(vk_entry: &Entry, layers_to_check : &Vec<&str>) -> bool {
 
             for available_layer in &instance_layer_properties {
                 let available_layer_name_slice = std::slice::from_raw_parts::<u8>(available_layer.layer_name.as_ptr() as *const u8, available_layer.layer_name.len());
-                let available_layer_name = CStr::from_bytes_until_nul(available_layer_name_slice).unwrap()
-                    .to_str().unwrap();
+                let available_layer_name = CStr::from_bytes_until_nul(available_layer_name_slice).unwrap().to_str().unwrap();
 
-                let pislort = *layer_name;
+                let layer_name_to_check = *layer_name;
 
-                if available_layer_name == pislort {
+                if available_layer_name == layer_name_to_check {
                     layer_found = true;
                     break;
                 }
