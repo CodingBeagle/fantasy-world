@@ -164,9 +164,13 @@ fn main() {
 
         // Pick GPU
         let picked_gpu = pick_physical_device(&vk_instance_local);
+        let queue_family_indices = find_queue_families(picked_gpu, vk_instance_local);
 
         // Create logical device
         let logical_device = create_logical_device(vk_instance_local, picked_gpu);
+
+        // Retrieve queue handle for the graphics family queue
+        let graphics_family_queue_handle = logical_device.get_device_queue(queue_family_indices.graphics_family.unwrap(), 0);
 
         let mut msg = MSG::default();
         while !EXIT {
