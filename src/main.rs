@@ -1,13 +1,11 @@
 use std::collections::HashSet;
-use std::fmt::Debug;
-use std::mem::{size_of, self};
-use std::{ffi::*, slice};
+use std::mem::{self};
+use std::{ffi::*};
 use std::str;
 
 use ash::vk::{DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCallbackDataEXT, QueueFamilyProperties, QueueFamilyQueryResultStatusPropertiesKHR, DeviceQueueCreateInfo};
 use ash::{Entry, Instance};
 
-use windows::Win32::Foundation::ERROR_VOLMGR_DISK_NOT_ENOUGH_SPACE;
 use windows::{
     Win32::{UI::WindowsAndMessaging::*,
     System::LibraryLoader::{GetModuleHandleA},
