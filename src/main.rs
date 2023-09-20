@@ -1,9 +1,10 @@
+use std::collections::HashSet;
 use std::fmt::Debug;
 use std::mem::{size_of, self};
 use std::{ffi::*, slice};
 use std::str;
 
-use ash::vk::{DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCallbackDataEXT, QueueFamilyProperties};
+use ash::vk::{DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCallbackDataEXT, QueueFamilyProperties, QueueFamilyQueryResultStatusPropertiesKHR, DeviceQueueCreateInfo};
 use ash::{Entry, Instance};
 
 use windows::Win32::Foundation::ERROR_VOLMGR_DISK_NOT_ENOUGH_SPACE;
@@ -151,6 +152,19 @@ fn main() {
         VK_INSTANCE = Some(vk_entry.create_instance(&create_info, None).unwrap());
         let vk_instance_local = VK_INSTANCE.as_ref().unwrap();
 
+        // Create window surface
+        // The surface handle itself will have its platform-specifics hidden away from us.
+        // However, surface creation is platform specific.
+        // For the sake of windows, it needs the concepts of HWND and HMODULE, which is win32 API concepts.
+        let mut win32_surface_creation_info = ash::vk::Win32SurfaceCreateInfoKHR::default();
+        win32_surface_creation_info.hwnd = MAIN_WINDOW_HANDLE.as_ref().unwrap().0 as *const c_void;
+        win32_surface_creation_info.hinstance = handle.0 as *const c_void;
+
+        let win32_surface_extensions = ash::extensions::khr::Win32Surface::new(&vk_entry, &vk_instance_local);
+
+        let surface = win32_surface_extensions.create_win32_surface(&win32_surface_creation_info, None).unwrap();
+        let surface_fn = ash::extensions::khr::Surface::new(&vk_entry, vk_instance_local);
+
         // Set up Vulkan Debug Messenger
         let vk_debug_messenger = ash::vk::DebugUtilsMessengerCreateInfoEXT::builder()
             .message_severity(ash::vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE | ash::vk::DebugUtilsMessageSeverityFlagsEXT::WARNING | ash::vk::DebugUtilsMessageSeverityFlagsEXT::ERROR)
@@ -163,11 +177,11 @@ fn main() {
         let vk_debug_messenger = debug_utils_extension.create_debug_utils_messenger(&vk_debug_messenger, None).unwrap();
 
         // Pick GPU
-        let picked_gpu = pick_physical_device(&vk_instance_local);
-        let queue_family_indices = find_queue_families(picked_gpu, vk_instance_local);
+        let picked_gpu = pick_physical_device(&vk_instance_local, surface, &surface_fn);
+        let queue_family_indices = find_queue_families(picked_gpu, vk_instance_local, surface, &surface_fn);
 
         // Create logical device
-        let logical_device = create_logical_device(vk_instance_local, picked_gpu);
+        let logical_device = create_logical_device(vk_instance_local, picked_gpu, surface, &surface_fn);
 
         // Retrieve queue handle for the graphics family queue
         let graphics_family_queue_handle = logical_device.get_device_queue(queue_family_indices.graphics_family.unwrap(), 0);
@@ -202,6 +216,10 @@ fn main() {
         // Cleanup logical device
         logical_device.destroy_device(None);
 
+        // Cleanup win32 surface
+        // It has to be destroyed before the instance.
+        surface_fn.destroy_surface(surface, None);
+
         // Application cleanup
         vk_instance_local.destroy_instance(None);
     }
@@ -211,24 +229,31 @@ fn create_array_of_string_pointers(c_string_collection : &Vec<CString>) -> Vec<*
     c_string_collection.iter().map(|x| x.as_bytes_with_nul().as_ptr() as *const i8).collect()
 }
 
-unsafe fn create_logical_device(vk_instance : &ash::Instance, physical_device : ash::vk::PhysicalDevice) -> ash::Device {
-    let queue_family_indices = find_queue_families(physical_device, vk_instance);
+unsafe fn create_logical_device(
+    vk_instance : &ash::Instance,
+    physical_device : ash::vk::PhysicalDevice,
+    surface : ash::vk::SurfaceKHR,
+    surface_fn : &ash::extensions::khr::Surface) -> ash::Device {
+    let queue_family_indices = find_queue_families(physical_device, vk_instance, surface, &surface_fn);
 
     // Vulkan lets you assign priorities to queues to influence the scheduling of command buffer execution using floating point numbers between 0.0 and 1.0.
     let queue_priorities : Vec<f32> = vec![1.0];
-
-    let mut queue_create_info = ash::vk::DeviceQueueCreateInfo::default();
-    queue_create_info.queue_family_index = queue_family_indices.graphics_family.unwrap();
-    queue_create_info.queue_count = 1;
-    queue_create_info.p_queue_priorities = queue_priorities.as_ptr();
+    let mut queue_create_infos : Vec<DeviceQueueCreateInfo> = vec!();
+    for graphic_queue_index in queue_family_indices.get_unique_family_indices() {
+        let mut queue_create_info = ash::vk::DeviceQueueCreateInfo::default();
+        queue_create_info.queue_family_index = graphic_queue_index;
+        queue_create_info.queue_count = 1;
+        queue_create_info.p_queue_priorities = queue_priorities.as_ptr();
+        queue_create_infos.push(queue_create_info);
+    }
 
     // We also need to specify device features we'd like to use.
     let device_features = ash::vk::PhysicalDeviceFeatures::default();
 
     // Now we can create the logical device
     let mut logical_device_create_info = ash::vk::DeviceCreateInfo::default();
-    logical_device_create_info.p_queue_create_infos = &queue_create_info;
-    logical_device_create_info.queue_create_info_count = 1;
+    logical_device_create_info.p_queue_create_infos = queue_create_infos.as_ptr();
+    logical_device_create_info.queue_create_info_count = queue_create_infos.len() as u32;
     logical_device_create_info.p_enabled_features = &device_features;
 
     // Previous implementations of Vulkan made a distinction between instance and device specific validation layers.
@@ -242,7 +267,10 @@ unsafe fn create_logical_device(vk_instance : &ash::Instance, physical_device : 
     vk_instance.create_device(physical_device, &logical_device_create_info, None).unwrap()
 }
 
-unsafe fn pick_physical_device(vk_instance : &ash::Instance) -> ash::vk::PhysicalDevice {
+unsafe fn pick_physical_device(
+    vk_instance : &ash::Instance,
+    surface : ash::vk::SurfaceKHR,
+    surface_fn : &ash::extensions::khr::Surface) -> ash::vk::PhysicalDevice {
     let physical_devices = vk_instance.enumerate_physical_devices().unwrap();
 
     if physical_devices.is_empty() {
@@ -251,7 +279,7 @@ unsafe fn pick_physical_device(vk_instance : &ash::Instance) -> ash::vk::Physica
 
     // Pick the first suitable device
     for physical_device in physical_devices {
-        if is_device_suitable(physical_device, vk_instance) {
+        if is_device_suitable(physical_device, vk_instance, surface, &surface_fn) {
             return physical_device;
         }
     }
@@ -260,7 +288,11 @@ unsafe fn pick_physical_device(vk_instance : &ash::Instance) -> ash::vk::Physica
 }
 
 // For now, I'm not doing anything fancy in determining what exactly I need. As long as it's a GPU!
-unsafe fn is_device_suitable(physical_device : ash::vk::PhysicalDevice, vk_instance : &ash::Instance) -> bool {
+unsafe fn is_device_suitable(
+    physical_device : ash::vk::PhysicalDevice,
+    vk_instance : &ash::Instance,
+    surface : ash::vk::SurfaceKHR,
+    surface_fn : &ash::extensions::khr::Surface) -> bool {
     // Basic device properties
     let physical_device_properties = vk_instance.get_physical_device_properties(physical_device);
     println!("Checking device {}...", CStr::from_ptr(physical_device_properties.device_name.as_ptr()).to_str().unwrap());
@@ -268,21 +300,41 @@ unsafe fn is_device_suitable(physical_device : ash::vk::PhysicalDevice, vk_insta
     // Support for optional features
     let physical_device_features = vk_instance.get_physical_device_features(physical_device);
 
-    find_queue_families(physical_device, vk_instance).graphics_family.is_some()
+    find_queue_families(physical_device, vk_instance, surface, &surface_fn).graphics_family.is_some()
 }
 
 #[derive(Default)]
 struct QueueFamilyIndices {
-    graphics_family: Option<u32>
+    graphics_family: Option<u32>,
+    present_family: Option<u32>
 }
 
 impl QueueFamilyIndices {
+    // TODO: I dunno... this is not pretty
+    pub fn get_unique_family_indices(&self) -> Vec<u32> {
+        let mut indices : HashSet<u32> = HashSet::new();
+        
+        if self.graphics_family.is_some() {
+            indices.insert(self.graphics_family.unwrap());
+        }
+
+        if self.present_family.is_some() {
+            indices.insert(self.present_family.unwrap());
+        }
+
+        indices.iter().map(|x| { *x }).collect()
+    }
+
     pub fn is_complete(&self) -> bool {
-        self.graphics_family.is_some()
+        self.graphics_family.is_some() && self.present_family.is_some()
     }
 }
 
-unsafe fn find_queue_families(physical_device : ash::vk::PhysicalDevice, vk_instance : &ash::Instance) -> QueueFamilyIndices {
+unsafe fn find_queue_families(
+    physical_device : ash::vk::PhysicalDevice,
+    vk_instance : &ash::Instance,
+    surface : ash::vk::SurfaceKHR,
+    surface_fn : &ash::extensions::khr::Surface) -> QueueFamilyIndices {
     let mut queue_family_indices = QueueFamilyIndices::default();
 
     let queue_families = vk_instance.get_physical_device_queue_family_properties(physical_device);
@@ -291,6 +343,11 @@ unsafe fn find_queue_families(physical_device : ash::vk::PhysicalDevice, vk_inst
     for queue_family in queue_families {
         if queue_family.queue_flags.contains(ash::vk::QueueFlags::GRAPHICS) {
             queue_family_indices.graphics_family = Some(index_counter);
+        }
+
+        let does_support_surface_present = surface_fn.get_physical_device_surface_support(physical_device, index_counter, surface).unwrap();
+        if does_support_surface_present {
+            queue_family_indices.present_family = Some(index_counter);
         }
 
         if queue_family_indices.is_complete() {

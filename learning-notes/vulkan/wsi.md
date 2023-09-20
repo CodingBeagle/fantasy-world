@@ -4,7 +4,7 @@ The Vulkan API itself is a platform-agnostic API.
 
 Vulkan in itself can be used without displaying results visually to a user.
 
-Because of that, displaying results visuall to a user through something like a window is given through optional Vulkan extensions.
+Because of that, displaying results visually to a user through something like a window is given through optional Vulkan extensions.
 
 There are platform-specific WSI extensions for native types (such as Windows, Mac OS, Android, etc...).
 
