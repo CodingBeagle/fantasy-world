@@ -345,6 +345,8 @@ unsafe fn find_queue_families(
             queue_family_indices.graphics_family = Some(index_counter);
         }
 
+        // Not all physical devices include WSI support.
+        // In order to figure out if it does, we'll have to call GetPhysicalDeviceSurfaceSupport for a specific queue family index.
         let does_support_surface_present = surface_fn.get_physical_device_surface_support(physical_device, index_counter, surface).unwrap();
         if does_support_surface_present {
             queue_family_indices.present_family = Some(index_counter);
