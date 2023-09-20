@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::mem::{self};
-use std::{ffi::*};
+use std::{ffi::*, slice};
 use std::str;
 
 use ash::vk::{DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCallbackDataEXT, QueueFamilyProperties, QueueFamilyQueryResultStatusPropertiesKHR, DeviceQueueCreateInfo};
