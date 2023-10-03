@@ -23,6 +23,8 @@ static mut REQUIRED_VALIDATION_LAYERS : Option<Vec<&str>> = None;
 
 fn main() {
     unsafe {
+        // Test
+
         // Retrieve module to the executable for the current process.
         // This HWND is used for many subsequent Win32 calls having to do with the current process.
         let handle = GetModuleHandleA(None)
